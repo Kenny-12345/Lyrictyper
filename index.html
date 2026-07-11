@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LyricTyper - Type to the Beat</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Global Error Catcher for Remote Debugging -->
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.position = 'fixed';
+        errorDiv.style.inset = '0';
+        errorDiv.style.backgroundColor = '#1c1917';
+        errorDiv.style.color = '#ef4444';
+        errorDiv.style.padding = '2rem';
+        errorDiv.style.fontFamily = 'monospace';
+        errorDiv.style.zIndex = '999999';
+        errorDiv.style.overflow = 'auto';
+        
+        errorDiv.innerHTML = `
+          <h1 style="color: #ef4444; font-size: 1.5rem; margin-bottom: 1rem;">⚠️ Application Crash Detected</h1>
+          <p style="color: #e7e5e4; margin-bottom: 1rem;"><strong>Error:</strong> ${message}</p>
+          <p style="color: #a8a29e; font-size: 0.85rem;"><strong>Source:</strong> ${source}:${lineno}:${colno}</p>
+          <pre style="margin-top: 1.5rem; background: #0c0a09; padding: 1rem; border-radius: 8px; color: #f43f5e; white-space: pre-wrap;">${error ? error.stack : 'No stack trace available'}</pre>
+        `;
+        document.body.appendChild(errorDiv);
+        return false;
+      };
+      
+      // Catch promise rejections as well
+      window.onunhandledrejection = function(event) {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.position = 'fixed';
+        errorDiv.style.inset = '0';
+        errorDiv.style.backgroundColor = '#1c1917';
+        errorDiv.style.color = '#ef4444';
+        errorDiv.style.padding = '2rem';
+        errorDiv.style.fontFamily = 'monospace';
+        errorDiv.style.zIndex = '999999';
+        errorDiv.style.overflow = 'auto';
+        
+        errorDiv.innerHTML = `
+          <h1 style="color: #ef4444; font-size: 1.5rem; margin-bottom: 1rem;">⚠️ Unhandled Promise Rejection</h1>
+          <p style="color: #e7e5e4; margin-bottom: 1rem;"><strong>Reason:</strong> ${event.reason}</p>
+          <pre style="margin-top: 1.5rem; background: #0c0a09; padding: 1rem; border-radius: 8px; color: #f43f5e; white-space: pre-wrap;">${event.reason && event.reason.stack ? event.reason.stack : 'No stack trace available'}</pre>
+        `;
+        document.body.appendChild(errorDiv);
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
