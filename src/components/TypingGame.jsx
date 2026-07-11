@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, RefreshCw, Trophy, Zap, AlertCircle } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Play, Pause, RefreshCw, Trophy, Zap } from 'lucide-react';
+
+// Characters the user never needs to type — auto-accepted
+const isPunct = (char) => /[^\w\s]/.test(char);
+
+// How many lyric lines get merged per difficulty
+const LINES_PER_CHUNK = { easy: 4, medium: 2, hard: 1 };
 
 export default function TypingGame({ lyrics, currentTime, isPlaying, onTogglePlay, onRestart }) {
-  // Game states
-  const [currentLineIndex, setCurrentLineIndex] = useState(0);
+  const [difficulty, setDifficulty] = useState('hard');
+  const [chunkIndex, setChunkIndex] = useState(0);
   const [typedInput, setTypedInput] = useState('');
   const [stats, setStats] = useState({
     correctChars: 0,
-    totalChars: 0,
     errors: 0,
     score: 0,
     streak: 0,
@@ -16,144 +21,164 @@ export default function TypingGame({ lyrics, currentTime, isPlaying, onTogglePla
   });
 
   const inputRef = useRef(null);
+  const linesPerChunk = LINES_PER_CHUNK[difficulty];
 
-  // Sync current lyric line index with currentTime
-  useEffect(() => {
-    if (!lyrics || lyrics.length === 0) return;
-
-    // Find the current active line based on current time
-    // We want the line whose time is <= currentTime, but the next line is > currentTime
-    let activeIndex = 0;
-    for (let i = 0; i < lyrics.length; i++) {
-      if (lyrics[i].time <= currentTime) {
-        activeIndex = i;
-      } else {
-        break;
-      }
+  // ─── Group lyrics into chunks based on difficulty ──────────────────────────
+  const chunks = (() => {
+    if (!lyrics || lyrics.length === 0) return [];
+    const result = [];
+    for (let i = 0; i < lyrics.length; i += linesPerChunk) {
+      const group = lyrics.slice(i, i + linesPerChunk);
+      result.push({
+        text: group.map(l => l.text).join(' '),
+        startTime: group[0].time,
+        endTime: group[group.length - 1].time,
+      });
     }
+    return result;
+  })();
 
-    if (activeIndex !== currentLineIndex) {
-      // User moved to a new line (either auto-advanced or seeked)
-      // Accumulate stats from the completed line before resetting input
-      if (typedInput.length > 0) {
-        evaluateLineProgress();
-      }
-      setCurrentLineIndex(activeIndex);
+  const activeChunk = chunks[chunkIndex] || null;
+  const prevChunk = chunks[chunkIndex - 1] || null;
+  const nextChunk = chunks[chunkIndex + 1] || null;
+
+  // ─── Sync chunk to music time ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!chunks.length) return;
+    let newIndex = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      if (chunks[i].startTime <= currentTime) newIndex = i;
+      else break;
+    }
+    if (newIndex !== chunkIndex) {
+      setChunkIndex(newIndex);
       setTypedInput('');
     }
-  }, [currentTime, lyrics]);
+  }, [currentTime, difficulty, lyrics]);
 
-  // Keep input focused
+  // ─── Reset on difficulty or song change ───────────────────────────────────
   useEffect(() => {
-    if (isPlaying && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isPlaying, currentLineIndex]);
+    setChunkIndex(0);
+    setTypedInput('');
+    setStats({ correctChars: 0, errors: 0, score: 0, streak: 0, maxStreak: 0 });
+  }, [difficulty, lyrics]);
 
-  const activeLine = lyrics && lyrics[currentLineIndex] ? lyrics[currentLineIndex].text : '';
-  const nextLine = lyrics && lyrics[currentLineIndex + 1] ? lyrics[currentLineIndex + 1].text : '';
-  const prevLine = lyrics && lyrics[currentLineIndex - 1] ? lyrics[currentLineIndex - 1].text : '';
+  // ─── Keep input focused ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isPlaying && inputRef.current) inputRef.current.focus();
+  }, [isPlaying, chunkIndex]);
 
-  // Calculate stats for completed typing when line changes
-  const evaluateLineProgress = () => {
-    const targetText = activeLine;
-    let correct = 0;
-    let errors = 0;
-
-    for (let i = 0; i < typedInput.length; i++) {
-      if (typedInput[i] === targetText[i]) {
-        correct++;
-      } else {
-        errors++;
-      }
-    }
-
-    setStats(prev => {
-      const lineScore = correct * 10 - errors * 5;
-      return {
-        ...prev,
-        correctChars: prev.correctChars + correct,
-        totalChars: prev.totalChars + targetText.length,
-        errors: prev.errors + errors,
-        score: Math.max(0, prev.score + lineScore),
-      };
-    });
-  };
-
-  // Handle typing input
+  // ─── Handle typing ─────────────────────────────────────────────────────────
   const handleInputChange = (e) => {
-    const val = e.target.value;
-    
-    // Don't let player type past target line length
-    if (val.length > activeLine.length) return;
+    if (!activeChunk) return;
+    let val = e.target.value;
+    const target = activeChunk.text;
+    if (val.length > target.length) return;
+
+    // Auto-skip punctuation characters — jump past them automatically
+    while (val.length < target.length && isPunct(target[val.length])) {
+      val += target[val.length];
+    }
 
     const charIndex = val.length - 1;
-    const isCorrect = val[charIndex] === activeLine[charIndex];
+    if (charIndex < 0) { setTypedInput(val); return; }
+
+    // Only score the character if it's not punctuation (punct is free)
+    const isCorrect = isPunct(target[charIndex]) ? true : val[charIndex] === target[charIndex];
 
     setStats(prev => {
       const newStreak = isCorrect ? prev.streak + 1 : 0;
       const newMax = Math.max(prev.maxStreak, newStreak);
-      const scoreAdd = isCorrect ? (10 + Math.floor(newStreak / 5) * 2) : 0; // Streak multipliers!
-      
-      return {
-        ...prev,
-        streak: newStreak,
-        maxStreak: newMax,
-        score: prev.score + scoreAdd,
-      };
+      const scoreAdd = isCorrect && !isPunct(target[charIndex]) ? 10 + Math.floor(newStreak / 5) * 2 : 0;
+      const newErrors = isCorrect ? prev.errors : prev.errors + 1;
+      const newCorrect = (isCorrect && !isPunct(target[charIndex])) ? prev.correctChars + 1 : prev.correctChars;
+      return { ...prev, streak: newStreak, maxStreak: newMax, score: prev.score + scoreAdd, errors: newErrors, correctChars: newCorrect };
     });
 
     setTypedInput(val);
 
-    // Auto-advance if fully typed correct
-    if (val === activeLine && currentLineIndex < lyrics.length - 1) {
-      // Finished line perfectly
-      setStats(prev => ({
-        ...prev,
-        correctChars: prev.correctChars + activeLine.length,
-        totalChars: prev.totalChars + activeLine.length,
-      }));
-      // Note: We don't advance the song audio, just wait for the timeline,
-      // but visually we can clear the input so they feel they did it.
-      setTypedInput('');
+    // Completed chunk — clear for next
+    if (val === target) {
+      setTimeout(() => setTypedInput(''), 150);
     }
   };
 
-  // Calculate live accuracy
-  const totalTyped = stats.correctChars + stats.errors + (typedInput.length);
-  const accuracy = totalTyped > 0 
-    ? Math.round(((stats.correctChars + typedInput.split('').filter((c, i) => c === activeLine[i]).length) / totalTyped) * 100)
-    : 100;
+  // ─── Render characters monkeytype style ───────────────────────────────────
+  const renderChunk = () => {
+    if (!activeChunk) return <span style={{ color: '#52525b', fontStyle: 'italic' }}>Waiting for intro...</span>;
+    return activeChunk.text.split('').map((char, i) => {
+      const punct = isPunct(char);
+      let color = '#52525b'; // future
 
-  // Calculate live WPM (assuming 5 characters = 1 word)
-  // Elapsed time in minutes
-  const elapsedMinutes = currentTime / 60;
-  const rawWpm = elapsedMinutes > 0.05 
-    ? Math.round((stats.correctChars / 5) / elapsedMinutes)
-    : 0;
-
-  // Render character styles for Monkeytype style UI
-  const renderLineCharacters = () => {
-    return activeLine.split('').map((char, index) => {
-      let className = 'char-future';
-      if (index < typedInput.length) {
-        className = typedInput[index] === char ? 'char-correct' : 'char-incorrect';
-      } else if (index === typedInput.length) {
-        className = 'char-current';
+      if (i < typedInput.length) {
+        // Punctuation always shows as auto-accepted (dim gold)
+        color = punct ? '#a16207' : (typedInput[i] === char ? '#f4f4f5' : '#ef4444');
+      } else if (i === typedInput.length) {
+        color = '#f4f4f5'; // cursor position
       }
 
+      const isError = !punct && i < typedInput.length && typedInput[i] !== char;
+
       return (
-        <span key={index} className={`typing-char ${className}`}>
+        <span
+          key={i}
+          style={{
+            color,
+            background: isError ? 'rgba(239,68,68,0.15)' : 'transparent',
+            borderRadius: isError ? '2px' : '0',
+            position: 'relative',
+            // Punct chars are slightly smaller to visually distinguish
+            fontSize: punct ? '0.85em' : '1em',
+            opacity: punct && i >= typedInput.length ? 0.4 : 1,
+          }}
+        >
           {char === ' ' ? '\u00A0' : char}
-          {index === typedInput.length && isPlaying && <span className="typing-caret" />}
+          {i === typedInput.length && isPlaying && <span className="typing-caret" />}
         </span>
       );
     });
   };
 
+  // ─── Stats ─────────────────────────────────────────────────────────────────
+  const totalTyped = stats.correctChars + stats.errors;
+  const accuracy = totalTyped > 0 ? Math.round((stats.correctChars / totalTyped) * 100) : 100;
+  const elapsedMinutes = currentTime / 60;
+  const rawWpm = elapsedMinutes > 0.05 ? Math.round((stats.correctChars / 5) / elapsedMinutes) : 0;
+  const isFinished = chunks.length > 0 && chunkIndex >= chunks.length - 1 && currentTime > (chunks[chunks.length - 1]?.endTime || 0) + 5;
+
   return (
     <div className="game-container">
-      {/* Top dashboard stats */}
+      {/* Difficulty selector */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        {['easy', 'medium', 'hard'].map(d => (
+          <button
+            key={d}
+            onClick={() => { setDifficulty(d); onRestart(); }}
+            style={{
+              padding: '0.4rem 1.1rem',
+              borderRadius: '999px',
+              border: '1px solid',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              background: difficulty === d
+                ? d === 'easy' ? '#22c55e' : d === 'medium' ? '#eab308' : '#ef4444'
+                : 'rgba(255,255,255,0.04)',
+              borderColor: difficulty === d
+                ? d === 'easy' ? '#22c55e' : d === 'medium' ? '#eab308' : '#ef4444'
+                : 'rgba(255,255,255,0.1)',
+              color: difficulty === d ? '#000' : '#71717a',
+            }}
+          >
+            {d === 'easy' ? `Easy (4 lines)` : d === 'medium' ? `Medium (2 lines)` : `Hard (1 line)`}
+          </button>
+        ))}
+      </div>
+
+      {/* Stats row */}
       <div className="stats-row">
         <div className="stat-card">
           <span className="stat-label">WPM</span>
@@ -176,9 +201,8 @@ export default function TypingGame({ lyrics, currentTime, isPlaying, onTogglePla
         </div>
       </div>
 
-      {/* Main typing viewport */}
+      {/* Typing viewport */}
       <div className="typing-viewport" onClick={() => inputRef.current?.focus()}>
-        {/* Hidden input field for mobile/desktop typing trigger */}
         <input
           ref={inputRef}
           type="text"
@@ -200,47 +224,55 @@ export default function TypingGame({ lyrics, currentTime, isPlaying, onTogglePla
               onClick={onTogglePlay}
               className="start-game-btn"
             >
-              <Play fill="black" style={{ width: '1.5rem', height: '1.5rem' }} /> Start Typing Game
+              <Play fill="black" style={{ width: '1.5rem', height: '1.5rem' }} />
+              Start Typing Game
             </motion.button>
-            <p style={{ color: '#52525b', fontSize: '0.75rem', marginTop: '0.75rem' }}>Type the lyrics as they sync to the beat of the song!</p>
+            <p style={{ color: '#52525b', fontSize: '0.75rem', marginTop: '0.75rem' }}>
+              {difficulty === 'easy' ? 'Type 4 lines at a time — nice and relaxed!' :
+               difficulty === 'medium' ? 'Type 2 lines at a time — find your rhythm!' :
+               'Type each line as it appears — stay on beat!'}
+            </p>
           </div>
         )}
 
         <div className="lyrics-scroller">
-          {/* Previous line (faded) */}
+          {/* Previous chunk (faded) */}
           <div className="lyric-line-prev">
-            {prevLine || '\u00A0'}
+            {prevChunk ? prevChunk.text.slice(0, 60) + (prevChunk.text.length > 60 ? '...' : '') : '\u00A0'}
           </div>
 
-          {/* Current typing line */}
-          <div className="lyric-line-active">
-            {activeLine ? renderLineCharacters() : (
-              <span className="text-muted italic animate-pulse">Waiting for intro beats...</span>
-            )}
+          {/* Active chunk — character by character */}
+          <div className="lyric-line-active" style={{
+            fontSize: difficulty === 'easy' ? '1.1rem' : difficulty === 'medium' ? '1.4rem' : '1.8rem',
+            lineHeight: 1.8,
+          }}>
+            {renderChunk()}
           </div>
 
-          {/* Next line preview */}
+          {/* Next chunk preview */}
           <div className="lyric-line-next">
-            {nextLine || '\u00A0'}
+            {nextChunk ? nextChunk.text.slice(0, 60) + (nextChunk.text.length > 60 ? '...' : '') : '\u00A0'}
           </div>
         </div>
       </div>
 
-      {/* Control panel */}
+      {/* Controls */}
       <div className="game-controls">
         <button className="control-btn" onClick={onTogglePlay}>
-          {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+          {isPlaying
+            ? <Pause style={{ width: '1.25rem', height: '1.25rem' }} />
+            : <Play style={{ width: '1.25rem', height: '1.25rem' }} />}
           {isPlaying ? 'Pause' : 'Resume'}
         </button>
         <button className="control-btn" onClick={onRestart}>
-          <RefreshCw className="w-5 h-5" />
-          Restart Track
+          <RefreshCw style={{ width: '1.25rem', height: '1.25rem' }} />
+          Restart
         </button>
       </div>
 
-      {/* Final Trophy Scorecard Modal */}
-      {lyrics && currentLineIndex >= lyrics.length - 1 && currentTime > lyrics[lyrics.length - 1].time + 5 && (
-        <motion.div 
+      {/* Results modal */}
+      {isFinished && (
+        <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           className="results-overlay"
@@ -248,6 +280,9 @@ export default function TypingGame({ lyrics, currentTime, isPlaying, onTogglePla
           <div className="results-card">
             <Trophy style={{ width: '4rem', height: '4rem', color: '#eab308', display: 'block', margin: '0 auto 1rem' }} />
             <h2 style={{ fontSize: '1.5rem', fontWeight: 900, marginBottom: '0.5rem' }}>Performance Summary</h2>
+            <p style={{ color: '#71717a', fontSize: '0.8rem', marginBottom: '1rem' }}>
+              Difficulty: <strong style={{ color: difficulty === 'easy' ? '#22c55e' : difficulty === 'medium' ? '#eab308' : '#ef4444', textTransform: 'capitalize' }}>{difficulty}</strong>
+            </p>
             <div className="results-grid">
               <div className="res-item"><span>Avg WPM</span><strong>{rawWpm}</strong></div>
               <div className="res-item"><span>Accuracy</span><strong>{accuracy}%</strong></div>
